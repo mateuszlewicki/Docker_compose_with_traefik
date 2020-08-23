@@ -1,0 +1,100 @@
+version: "3.3"
+services:
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    networks:
+      app_net:
+        ipv4_address: 10.0.0.5
+    extra_hosts:
+      - "backend:10.0.0.6"
+    container_name: "myapp"
+    labels:
+      - traefik.enable=true
+      - traefik.port=80
+      - traefik.http.routers.frontend.rule=Host(`frontend.localhost`)
+      - traefik.http.routers.frontend.entrypoints=http
+      - traefik.http.services.myservice.loadbalancer.server.port=80
+            
+  backend:
+    build: ./backend
+    networks:
+      app_net:
+        ipv4_address: 10.0.0.6
+    extra_hosts:
+      - "backend.localhost:127.0.0.1"
+    expose:
+      - "80"
+    labels:
+      - traefik.enable=true
+      # - traefik.port=80
+      - traefik.http.routers.backend-container.rule=Host(`frontend.localhost`) && PathPrefix(`/back`)
+     # - traefik.http.routers.backend.entrypoints=http
+      - traefik.http.services.backend-service.loadbalancer.server.port=80
+      - "traefik.http.routers.backend-container.middlewares=back-stripprefix"
+      - "traefik.http.middlewares.back-stripprefix.stripprefix.prefixes=/back"
+  proxy:
+    image: traefik:v2.2
+    # Enables the web UI and tells Traefik to listen to docker
+    command: --api.insecure=true --providers.docker --providers.docker.exposedbydefault=false --tracing.jaeger=true --tracing.jaeger.samplingServerURL=http://10.0.0.19:5778/sampling --tracing.jaeger.localAgentHostPort=10.0.0.19:6831 --metrics.prometheus=true
+    ports:
+      # The HTTP port
+      - "80:80"
+      # The Web UI (enabled by --api.insecure=true)
+      - "8080:8080"
+    volumes:
+      # So that Traefik can listen to the Docker events
+      - /var/run/docker.sock:/var/run/docker.sock
+    labels:
+      - traefik.docker.network=app_net
+      - traefik.port=8080
+      - entrypoints.web.address=:80
+    networks:
+      app_net:
+        ipv4_address: 10.0.0.4
+      app_public:
+        ipv4_address: 10.0.0.18
+    
+  jaeger:
+    image: jaegertracing/all-in-one:1.18
+    ports:
+      - "5775:5775/udp" 
+      - "6831:6831/udp" 
+      - "6832:6832/udp"
+      - "5778:5778"
+      - "16686:16686"
+      - "14268:14268"
+      - "14250:14250"
+      - "9411:9411"
+    networks:
+      app_public:
+        ipv4_address: 10.0.0.19
+
+  prom:
+    image: prom/prometheus
+    networks:
+      app_public:
+        ipv4_address: 10.0.0.20
+    volumes:
+      - ./prom/:/etc/prometheus/
+  grafana:
+    image: grafana/grafana
+    networks:
+      app_public:
+        ipv4_address: 10.0.0.21
+
+
+
+networks:
+  app_net:
+    ipam:
+      driver: default
+      config:
+        - subnet: "10.0.0.0/28"
+    internal: true
+  app_public:
+    ipam:
+      driver: default
+      config:
+        - subnet: "10.0.0.16/28"
